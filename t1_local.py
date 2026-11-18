@@ -252,6 +252,7 @@ def main():
     parser.add_argument("--seeds", default="1,2,3")
     parser.add_argument("--modes", default="xvec,icl")
     parser.add_argument("--batch-size", type=int, default=1)
+    parser.add_argument("--phase", choices=("all", "generate", "score"), default="all")
     args = parser.parse_args()
     seeds = tuple(int(part) for part in args.seeds.split(",") if part)
     modes = [part for part in args.modes.split(",") if part]
@@ -273,16 +274,19 @@ def main():
         })
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    meta = noise_generate(
-        args.ckpt, "run", 0, shards=1, batch_size=args.batch_size, budget_s=3600,
-        root=str(out), seeds=seeds, rows_in=gen_rows,
-    )
-    print(json.dumps({"generate": {k: meta.get(k) for k in ("done", "n", "errors", "wall_s", "load_s")}}), flush=True)
-    import gc
-    import torch
-    gc.collect()
-    torch.cuda.empty_cache()
-    score_dir(out / "run", exam, 0)
+    if args.phase in ("all", "generate"):
+        meta = noise_generate(
+            args.ckpt, "run", 0, shards=1, batch_size=args.batch_size, budget_s=3600,
+            root=str(out), seeds=seeds, rows_in=gen_rows,
+        )
+        print(json.dumps({"generate": {k: meta.get(k) for k in ("done", "n", "errors", "wall_s", "load_s")}}), flush=True)
+    if args.phase == "all":
+        import gc
+        import torch
+        gc.collect()
+        torch.cuda.empty_cache()
+    if args.phase in ("all", "score"):
+        score_dir(out / "run", exam, 0)
 
 
 if __name__ == "__main__":

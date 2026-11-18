@@ -45,10 +45,12 @@ export EXAM=$QWEN_DATA_ROOT/tasks/t1_eval/testset/partB.jsonl
 export OUT=$QWEN_DATA_ROOT/tasks/t1_eval/results/my-run
 export SEEDS=1,2,3
 export MODES=xvec,icl
+export GEN_PYTHON=$PWD/.venv-train/bin/python
+export SCORE_PYTHON=$PWD/.venv-score/bin/python
 bash scripts/score_local.sh
 ```
 
-`score_local.sh` calls `python -m t1_local`. Results land in `$OUT/run/` (`manifest_0.jsonl`, `audio_0.tar`, `score_0.jsonl`).
+`score_local.sh` calls `python -m t1_local`. Set `GEN_PYTHON` to the train venv and `SCORE_PYTHON` to the score venv. qwen-tts does not import on the score pin, so generation and scoring are two processes. Results land in `$OUT/run/` (`manifest_0.jsonl`, `audio_0.tar`, `score_0.jsonl`).
 
 A full Modal checkpoint is about $8 of L40S time at $1.95 per GPU-hour. That is the planning figure. `modal run t1_eval.py::timing` writes a fresh estimate to `tasks/t1_eval/timing_estimate.md` from a 50-clip probe. Print that number before you launch a full score. Do not start the full score if the estimate plus what you have already spent breaks the cap you were given.
 

@@ -20,7 +20,9 @@ python3.11 -m venv .venv-score
 .venv-score/bin/pip install -r requirements-score.txt
 ```
 
-`requirements-train.txt` is torch 2.6.0 (cu124), transformers 4.57.3, qwen-tts, accelerate. `requirements-score.txt` is torch 2.6.0, transformers >= 5.4.0, and UTMOSv2 from git. System packages: `ffmpeg`, `libsndfile`.
+`requirements-train.txt` is torch 2.6.0 (cu124), torchaudio 2.6.0 (cu124), transformers 4.57.3, qwen-tts, accelerate. `requirements-score.txt` is torch 2.6.0, torchaudio 2.6.0, transformers >= 5.4.0, and UTMOSv2 from git. torchaudio is pinned because qwen-tts asks for an unpinned torchaudio, and the current wheel needs CUDA 13. System packages: `ffmpeg`, `libsndfile`. The `sox` Python package prints a warning when the `sox` binary is missing. Training reads wavs with librosa, so that warning is not a failure.
+
+qwen-tts 0.1.1 does not import under transformers 5 (`check_model_inputs()` changed). Generation and scoring stay in separate processes, the same split as the Modal images. `scripts/score_local.sh` runs generation with `GEN_PYTHON` and scoring with `SCORE_PYTHON`. Point those at the two venvs. If they are the same interpreter, one process runs both phases.
 
 Copy `paths.env.example` to `paths.env`.
 
@@ -77,5 +79,7 @@ export CKPT=$QWEN_DATA_ROOT/exp_11labs/runs/step-005482-base
 export EXAM=$QWEN_DATA_ROOT/tasks/t1_eval/testset/partB.jsonl
 export OUT=/tmp/t1-smoke
 export LIMIT=20 SEEDS=1 MODES=xvec BATCH=1
+export GEN_PYTHON=$PWD/.venv-train/bin/python
+export SCORE_PYTHON=$PWD/.venv-score/bin/python
 bash scripts/score_local.sh
 ```
