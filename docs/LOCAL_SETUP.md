@@ -55,7 +55,7 @@ Sizes measured while packing the smoke test are filled in at the bottom of `docs
 
 ## VRAM
 
-Training at the historical batch of 4 used 41 GB on an H100 and only 22% of the GPU. Use an 80 GB GPU for that batch. A 24 GB card is below that measurement. The smoke test on the 4090 uses batch 1 and records the peak. If it runs out of memory, that is the result. Do not switch the smoke test to Modal.
+Training at the historical batch of 4 used 41 GB on an H100 and only 22% of the GPU. Use an 80 GB GPU for that batch. A 24 GB card is below that measurement. The smoke test on the 4090 uses batch 1. It ran out of memory at the first Adam step with fp32 master weights: 22.43 GiB in use, 70 MiB free. That is the training result. Do not switch the smoke test to Modal. Scoring 20 Part B rows on the same card peaked at 12583 MiB.
 
 T1 scoring loads Cohere, then Jais, then WavLM, then UTMOSv2, and drops each model before the next. The peak on the smoke machine is in `docs/SMOKE_TEST.md`. WavLM is `microsoft/wavlm-base-plus-sv` (small). Cohere and Jais are the large ones. Jais is three safetensors shards.
 
