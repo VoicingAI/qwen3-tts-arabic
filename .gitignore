@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.env
+paths.env
+.venv/
+.venv-train/
+.venv-score/
+*.safetensors
+*.flac
+*.wav
+*.tar
+/data/

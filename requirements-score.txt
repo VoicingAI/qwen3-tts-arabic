@@ -1,0 +1,13 @@
+--extra-index-url https://download.pytorch.org/whl/cu124
+torch==2.6.0
+transformers>=5.4.0
+accelerate
+soundfile
+librosa
+numpy
+sentencepiece
+protobuf
+huggingface_hub
+rapidfuzz
+safetensors
+git+https://github.com/sarulab-speech/UTMOSv2.git
