@@ -60,6 +60,23 @@ def reserved_codec_ids(tc):
     return ids
 
 
+def data_root():
+    return os.environ.get("QWEN_DATA_ROOT", "/data").rstrip("/") or "/data"
+
+
+def remap_data(path):
+    """Volume jsonl stores absolute /data paths. Local runs point those at QWEN_DATA_ROOT.
+
+    The default root is /data, so a Modal job reads the same paths it always did.
+    """
+    if not isinstance(path, str):
+        return path
+    root = data_root()
+    if path == "/data" or path.startswith("/data/"):
+        return root + path[len("/data"):]
+    return path
+
+
 def resolve_local(path):
     if os.path.isdir(path):
         return path
@@ -210,6 +227,11 @@ def load_rows(path, require_split=""):
             if not line.strip():
                 continue
             r = json.loads(line)
+            for key, val in list(r.items()):
+                if isinstance(val, str):
+                    r[key] = remap_data(val)
+                elif isinstance(val, list):
+                    r[key] = [remap_data(item) if isinstance(item, str) else item for item in val]
             if require_split and r.get("split") and r.get("split") != require_split:
                 continue
             if require_split and (not r.get("audio_codes") or not str(r.get("text") or "").strip()):

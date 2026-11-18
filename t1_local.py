@@ -278,6 +278,10 @@ def main():
         root=str(out), seeds=seeds, rows_in=gen_rows,
     )
     print(json.dumps({"generate": {k: meta.get(k) for k in ("done", "n", "errors", "wall_s", "load_s")}}), flush=True)
+    import gc
+    import torch
+    gc.collect()
+    torch.cuda.empty_cache()
     score_dir(out / "run", exam, 0)
 
 

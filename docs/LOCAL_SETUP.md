@@ -1,6 +1,6 @@
 # Local GPU setup
 
-You run training and T1 on your own machine. Modal wrappers are still in the repo. Leave `QWEN_DATA_ROOT` unset when you `modal run`. Set it for every local command.
+You run training and T1 on your own machine. Modal wrappers are still in the repo. Leave `QWEN_DATA_ROOT` unset when you `modal run`. Set it for every local command. Manifests on the volume store absolute `/data/...` paths. `train_dialects.py` and `t1_local.py` rewrite those onto `QWEN_DATA_ROOT`. The default root is `/data`, so an unset variable still reads the volume.
 
 ## Software
 
