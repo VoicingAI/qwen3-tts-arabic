@@ -2,6 +2,8 @@
 
 Do them in this order. Print the cost and stop before any GPU job that would pass the cap you were given. Never more than 10 GPUs. Do not train on the test set. Do not write into `step-045190-base`.
 
+A 24 GB GPU is LoRA only (`LORA=1` in `scripts/train_local.sh`, rank 64, alpha 64, learning rate 1e-4, base in bf16). Full fine-tune needs 48 GB or more, or Modal. The tasks below that train the full model are full fine-tunes. Do not launch them on a 4090.
+
 Costs below use the T5 probe rate of $4.84 per hour for one H100 with 8 CPU cores and 64 GiB, the H100 GPU price of $3.95 per hour, and about $8 for one full T1 checkpoint on L40S. They are estimates. Replace them with a measurement before you launch.
 
 ## 1. GPU utilisation

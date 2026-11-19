@@ -10,11 +10,9 @@ if [[ -f paths.env ]]; then
   set +a
 fi
 : "${QWEN_DATA_ROOT:?set QWEN_DATA_ROOT}"
+# dataset.py is vendored. Set QWEN3_TTS_DIR only to override that pin.
 if [[ -z "${QWEN3_TTS_DIR:-}" ]]; then
-  if [[ ! -f /opt/Qwen3-TTS/finetuning/dataset.py ]]; then
-    git clone --depth 1 https://github.com/QwenLM/Qwen3-TTS.git /opt/Qwen3-TTS
-  fi
-  QWEN3_TTS_DIR=/opt/Qwen3-TTS
+  QWEN3_TTS_DIR="$PWD/vendor/Qwen3-TTS"
 fi
 export QWEN3_TTS_DIR
 export PYTHONPATH="$PWD:${PYTHONPATH:-}"
@@ -25,7 +23,14 @@ TRAIN_JSONL="${TRAIN_JSONL:?set TRAIN_JSONL}"
 VAL_JSONL="${VAL_JSONL:-}"
 OUT="${OUT:?set OUT}"
 DIALECTS="${DIALECTS:-ar_msa,ar_egy,ar_sau,ar_irq,ar_tun,ar_mar,ar_omn,ar_jor,ar_syr,ar_sdn}"
-LR="${LR:-2e-6}"
+LORA="${LORA:-0}"
+if [[ "$LORA" == 1 ]]; then
+  LR="${LR:-1e-4}"
+  FP32_MASTER=0
+else
+  LR="${LR:-2e-6}"
+  FP32_MASTER=1
+fi
 EPOCHS="${EPOCHS:-1}"
 BATCH="${BATCH:-1}"
 ACCUM="${ACCUM:-1}"
@@ -53,7 +58,10 @@ args=(
   --sub_talker_weight 0.3
   --diac_prob 0.5
   --lang_lr_mult 20
-  --fp32_master 1
+  --fp32_master "$FP32_MASTER"
+  --lora "$LORA"
+  --lora_rank 64
+  --lora_alpha 64
   --num_workers 0
   --max_steps "$MAX_STEPS"
 )

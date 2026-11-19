@@ -32,7 +32,8 @@ from torch.utils.data import DataLoader
 from transformers import AutoConfig, get_cosine_schedule_with_warmup
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-QDIR = os.environ.get("QWEN3_TTS_DIR", os.path.join(HERE, "Qwen3-TTS"))
+# Vendored copy of QwenLM/Qwen3-TTS finetuning/dataset.py. See vendor/Qwen3-TTS/VENDOR.md.
+QDIR = os.environ.get("QWEN3_TTS_DIR") or os.path.join(HERE, "vendor", "Qwen3-TTS")
 sys.path.insert(0, os.path.join(QDIR, "finetuning"))
 
 DEFAULT_DIALECTS = "ar_msa,ar_egy,ar_sau,ar_uae,ar_gulf,ar_omn,ar_lev,ar_irq,ar_mar,ar_tun,ar_dza"
@@ -82,6 +83,58 @@ def resolve_local(path):
         return path
     from huggingface_hub import snapshot_download
     return snapshot_download(path)
+
+
+LORA_LEAVES = ("q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj")
+
+
+class LoRALinear(nn.Module):
+    """Frozen bf16 linear plus a fp32 LoRA. B starts at zero, so step 0 matches the base."""
+
+    def __init__(self, base, rank, alpha):
+        super().__init__()
+        if not isinstance(base, nn.Linear):
+            raise TypeError(type(base))
+        self.base = base
+        self.rank = int(rank)
+        self.scaling = float(alpha) / float(rank)
+        for param in self.base.parameters():
+            param.requires_grad = False
+        self.lora_A = nn.Parameter(torch.empty(rank, base.in_features, dtype=torch.float32))
+        self.lora_B = nn.Parameter(torch.zeros(base.out_features, rank, dtype=torch.float32))
+        nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
+
+    def forward(self, x):
+        y = self.base(x)
+        delta = x.float().matmul(self.lora_A.transpose(0, 1)).matmul(self.lora_B.transpose(0, 1))
+        return y + (delta * self.scaling).to(dtype=y.dtype)
+
+    def merged_weight(self):
+        weight = self.base.weight.detach().float()
+        weight = weight + self.scaling * (self.lora_B.detach() @ self.lora_A.detach())
+        return weight.to(dtype=self.base.weight.dtype)
+
+
+def apply_lora(root, rank, alpha):
+    """Wrap q/k/v/o and gate/up/down under the talker, which includes the code predictor."""
+    targets = []
+    for parent in root.modules():
+        for name, child in list(parent.named_children()):
+            if name in LORA_LEAVES and isinstance(child, nn.Linear):
+                targets.append((parent, name, child))
+    if not targets:
+        raise RuntimeError("no LoRA targets under the talker")
+    for parent, name, child in targets:
+        wrapped = LoRALinear(child, rank, alpha)
+        wrapped = wrapped.to(device=child.weight.device)
+        setattr(parent, name, wrapped)
+    return len(targets)
+
+
+def enable_checkpointing(module):
+    module.gradient_checkpointing_enable(
+        gradient_checkpointing_kwargs={"use_reentrant": False}
+    )
 
 
 # ----------------------------------------------------------------------------- data
@@ -320,6 +373,10 @@ def talker_step(model, lang_emb, batch):
     if has.any():
         cod[bi[has], batch["lang_pos"].to(dev)[has]] = lang_emb(lidx[has]).to(cod.dtype)
     emb = txt + cod
+    # Frozen base embeddings do not require grad. Checkpointing then drops the LoRA graph
+    # unless the talker input itself asks for a gradient.
+    if not emb.requires_grad and any(p.requires_grad for p in model.talker.parameters()):
+        emb.requires_grad_(True)
     codec_ids, cmask = batch["codec_ids"].to(dev), batch["codec_mask"].to(dev)
     for i in range(1, 16):
         e = model.talker.code_predictor.get_input_embeddings()[i - 1](codec_ids[:, :, i])
@@ -389,8 +446,16 @@ def save_checkpoint(wrapper, init_dir, out_dir, lang_map, spk_stats, args, tag, 
     m, lang_emb = wrapper.model, wrapper.lang_emb
     W = lang_emb.weight.detach().float().cpu()
     dtype = torch.bfloat16
-    sd = {k: (v.detach().to("cpu").to(dtype) if v.is_floating_point() else v.detach().to("cpu"))
-          for k, v in m.state_dict().items()}
+    sd = {}
+    for key, value in m.state_dict().items():
+        if ".lora_A" in key or ".lora_B" in key or ".base.weight" in key or ".base.bias" in key:
+            continue
+        sd[key] = value.detach().to("cpu").to(dtype) if value.is_floating_point() else value.detach().to("cpu")
+    for name, module in m.named_modules():
+        if isinstance(module, LoRALinear):
+            sd[name + ".weight"] = module.merged_weight().detach().to("cpu").to(dtype)
+            if module.base.bias is not None:
+                sd[name + ".bias"] = module.base.bias.detach().to("cpu")
     key = "talker.model.codec_embedding.weight"
     for j, (name, cid) in enumerate(lang_map.items()):
         sd[key][cid] = W[j].to(dtype)
@@ -443,7 +508,11 @@ def main():
     ap.add_argument("--export_speakers", type=int, default=0)
     ap.add_argument("--id_dropout", type=float, default=0.1)
     ap.add_argument("--init_noise", type=float, default=0.01)
-    ap.add_argument("--lr", type=float, default=5e-6)
+    ap.add_argument("--lr", type=float, default=None,
+                    help="default 5e-6 for a full fine-tune, 1e-4 when --lora 1")
+    ap.add_argument("--lora", type=int, default=0, help="1: LoRA on the talker and code predictor, base frozen in bf16")
+    ap.add_argument("--lora_rank", type=int, default=64)
+    ap.add_argument("--lora_alpha", type=float, default=64)
     ap.add_argument("--lang_lr_mult", type=float, default=20.0)
     ap.add_argument("--weight_decay", type=float, default=0.01)
     ap.add_argument("--warmup_frac", type=float, default=0.03)
@@ -470,6 +539,12 @@ def main():
     ap.add_argument("--max_steps", type=int, default=0,
                     help="stop after this many optimizer steps; 0 runs the full epoch count")
     args = ap.parse_args()
+    if args.lora:
+        args.fp32_master = 0
+        if args.lr is None:
+            args.lr = 1e-4
+    elif args.lr is None:
+        args.lr = 5e-6
 
     random.seed(args.seed); torch.manual_seed(args.seed)
     acc = Accelerator(gradient_accumulation_steps=args.grad_accum, mixed_precision="bf16",
@@ -536,6 +611,23 @@ def main():
         extra2_dl = DataLoader(e2ds, batch_size=args.batch_size, shuffle=False, collate_fn=e2ds.collate_fn, num_workers=2)
 
     # ---- params / optimizer / schedule
+    if args.lora:
+        for param in model.parameters():
+            param.requires_grad = False
+        n_lora = apply_lora(model.talker, args.lora_rank, args.lora_alpha)
+        enable_checkpointing(model.talker)
+        n_ckpt = sum(
+            1 for module in model.talker.modules()
+            if module.__class__.__name__.endswith("DecoderLayer") and module.gradient_checkpointing
+        )
+        n_train = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        acc.print(
+            f"lora modules {n_lora} rank {args.lora_rank} alpha {args.lora_alpha} "
+            f"trainable {n_train:,d} | checkpointed decoder layers {n_ckpt} | "
+            f"base bf16, lora fp32, lr {args.lr:g}"
+        )
+        if n_ckpt == 0:
+            raise RuntimeError("gradient checkpointing did not turn on")
     for p in model.speaker_encoder.parameters():
         p.requires_grad = False
     if args.freeze_code_predictor:
@@ -670,12 +762,10 @@ def main():
                 continue
             sched.step()
             step += 1; step_in_epoch += 1
-            if step == 1 and acc.is_main_process:
-                acc.print(f"ep {ep} step {step}/{total} started")
             if args.diac_prob > 0 and acc.is_main_process:
                 diac_seen += float(batch["used_diac"].sum())
                 diac_tot += float(batch["used_diac"].numel())
-            if step % 20 == 0:
+            if step == 1 or step % 20 == 0 or (args.max_steps and step >= args.max_steps):
                 el = time.time() - t0
                 rate = (step - steps0) / max(el, 1e-6)
                 eta_h = (total - step) / max(rate, 1e-9) / 3600
@@ -692,7 +782,7 @@ def main():
                     diac_note = f" diac {diac_seen / max(diac_tot, 1):.2f}"
                 acc.print(f"ep {ep} step {step}/{total} loss {loss.item():.4f} main {lm.item():.4f} "
                           f"sub {ls.item():.4f} lr {sched.get_last_lr()[0]:.2e} | "
-                          f"{ah_per_h:.0f} audio-h/h | ETA {eta_h:.1f} h{diac_note}{gnote}")
+                          f"{rate:.3f} steps/s | {ah_per_h:.0f} audio-h/h | ETA {eta_h:.1f} h{diac_note}{gnote}")
             if val_dl is not None and step % args.eval_every == 0:
                 wrapper.eval()
                 vl = eval_main(val_dl)
@@ -718,8 +808,10 @@ def main():
             if step >= total:
                 break
         ep += 1
+    if torch.cuda.is_available() and acc.is_main_process:
+        acc.print(f"peak allocated {torch.cuda.max_memory_allocated() / 1024**2:.0f} MiB")
     acc.end_training()
-    acc.print("training finished")
+    acc.print(f"training finished steps {step} wall {time.time() - t0:.1f}s")
 
 
 if __name__ == "__main__":

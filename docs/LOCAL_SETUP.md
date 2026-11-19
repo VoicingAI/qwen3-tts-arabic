@@ -6,7 +6,7 @@ You run training and T1 on your own machine. Modal wrappers are still in the rep
 
 - Linux, NVIDIA driver new enough for CUDA 12.4. The box that ran `docs/SMOKE_TEST.md` had driver 580.178 and an RTX 4090.
 - Python 3.11.
-- A checkout of https://github.com/QwenLM/Qwen3-TTS (the image clones `--depth 1` to `/opt/Qwen3-TTS`). `train_dialects.py` imports `finetuning/dataset.py` from `$QWEN3_TTS_DIR`. That module is not in this repo. It is in that checkout. Confirmed: `finetuning/dataset.py` defines `TTSDataset`.
+- `vendor/Qwen3-TTS/finetuning/dataset.py` is the Qwen finetune dataset, commit `022e286b98fbec7e1e916cb940cdf532cd9f488e`, Apache-2.0. Training imports that file. Set `QWEN3_TTS_DIR` only if you want a different checkout.
 
 Train stack and score stack pin different Transformers. Use two venvs.
 
@@ -55,21 +55,19 @@ Sizes measured while packing the smoke test are filled in at the bottom of `docs
 
 ## VRAM
 
-Training at the historical batch of 4 used 41 GB on an H100 and only 22% of the GPU. Use an 80 GB GPU for that batch. A 24 GB card is below that measurement. The smoke test on the 4090 uses batch 1. It ran out of memory at the first Adam step with fp32 master weights: 22.43 GiB in use, 70 MiB free. That is the training result. Do not switch the smoke test to Modal. Scoring 20 Part B rows on the same card peaked at 12583 MiB.
+A 24 GB GPU, including the RTX 4090, is LoRA only. Full fine-tune needs 48 GB or more, or a Modal GPU. The historical batch of 4 used 41 GB on an H100 and only 22% of the GPU, so that shape still wants an 80 GB card. On this 4090, full fine-tune at batch 1 with fp32 master weights ran out of memory at the first Adam step (22.43 GiB in use). LoRA (rank 64, alpha 64, base bf16, LoRA fp32, gradient checkpointing) is the 24 GB path. `LORA=1` in `scripts/train_local.sh` selects it and sets the learning rate to 1e-4. On this 4090, 50 steps at batch 2 from s5482 allocated 7001 MiB (nvidia-smi peak 9650 MiB) and averaged 0.43 s/step. Details are in `docs/SMOKE_TEST.md`. Scoring 20 Part B rows on the same card peaked at 12583 MiB.
 
 T1 scoring loads Cohere, then Jais, then WavLM, then UTMOSv2, and drops each model before the next. The peak on the smoke machine is in `docs/SMOKE_TEST.md`. WavLM is `microsoft/wavlm-base-plus-sv` (small). Cohere and Jais are the large ones. Jais is three safetensors shards.
 
 ## Local commands
 
 ```bash
-# 50 steps from s5482, batch 1, nothing kept
+# 24 GB card: LoRA, 50 steps from s5482, nothing kept
 export QWEN_DATA_ROOT=/path/to/data
-export QWEN3_TTS_DIR=/opt/Qwen3-TTS
 export INIT=$QWEN_DATA_ROOT/exp_11labs/runs/step-005482-base
 export TRAIN_JSONL=/tmp/smoke_train.jsonl   # a few dozen rows, not the full file
-export VAL_JSONL=$QWEN_DATA_ROOT/exp_11labs/val_codes.jsonl
 export OUT=/tmp/qwen-smoke
-export BATCH=1 MAX_STEPS=50 LR=2e-6 EPOCHS=1
+export LORA=1 BATCH=2 MAX_STEPS=50 EPOCHS=2
 bash scripts/train_local.sh
 rm -rf /tmp/qwen-smoke
 ```

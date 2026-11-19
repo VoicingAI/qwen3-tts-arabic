@@ -10,9 +10,11 @@ Speaker encoder is frozen in `train_dialects.py`. `freeze_code_predictor` is 0, 
 
 ## Base
 
-Repo id `Qwen/Qwen3-TTS-12Hz-1.7B-Base`. Local path used by Stage B1: `/data/models/Qwen3-TTS-12Hz-1.7B-Base`. Tokenizer `/data/models/Qwen3-TTS-Tokenizer-12Hz`. The Stage B1 `run.json` does not record a Hugging Face revision. Do not invent one.
+Repo id `Qwen/Qwen3-TTS-12Hz-1.7B-Base`. Local path used by Stage B1: `/data/models/Qwen3-TTS-12Hz-1.7B-Base`. Tokenizer `/data/models/Qwen3-TTS-Tokenizer-12Hz`.
 
-The trainer imports `TTSDataset` from a checkout of [QwenLM/Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) `finetuning/dataset.py`. That file is not in this repo. `modal_app.py` clones it to `/opt/Qwen3-TTS`. Locally, set `QWEN3_TTS_DIR` to that checkout.
+`s5482` `config.json` does not store a revision (`_name_or_path` is empty). The copy at `/data/models/Qwen3-TTS-12Hz-1.7B-Base`, which Stage B1's `run.json` names as the base, has Hugging Face download metadata on `config.json` and `model.safetensors`. That metadata, and `hf_cache/.../refs/main` for the same repo, is `fd4b254389122332181a7c3db7f27e918eec64e3`.
+
+The trainer imports `TTSDataset` from `vendor/Qwen3-TTS/finetuning/dataset.py`, pinned to QwenLM/Qwen3-TTS commit `022e286b98fbec7e1e916cb940cdf532cd9f488e`. Apache-2.0, see `vendor/Qwen3-TTS/LICENSE`. `modal_app.py` still clones the upstream repo for the Modal image. A local run uses the vendored file unless `QWEN3_TTS_DIR` is set.
 
 ## Stage A3
 

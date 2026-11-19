@@ -86,3 +86,41 @@ The first score process then loaded Cohere and Jais and died while UTMOSv2's `wg
 Those 20 rows are the first lines of Part B, all Emirati, seed 1, x-vector only. `wer_mean` is the Cohere mean. Jais ran on all 20 (Emirati is Gulf). Mean Jais WER 0.052. Mean of the two, which is the T1 Gulf rule, is 0.066. Mean WavLM cosine 0.856. Mean UTMOSv2 2.94. Broken 0, errors 0. This is not the full-exam Part B number.
 
 Weight-loading progress bars are omitted above. They are redraws of the same line.
+
+## LoRA on the 4090
+
+Full fine-tune at batch 1 does not fit, above. The same card does fit LoRA. 50 steps, batch 2, from `step-005482-base`, rank 64, alpha 64, learning rate 1e-4, base bf16, LoRA weights fp32, gradient checkpointing on. `/tmp/qwen-smoke` held a TensorBoard file only. It was deleted. No checkpoint was kept. Spend $0.
+
+```bash
+export QWEN_DATA_ROOT=/tmp/qwen_smoke_data
+export INIT=$QWEN_DATA_ROOT/exp_11labs/runs/step-005482-base
+export TRAIN_JSONL=$QWEN_DATA_ROOT/exp_11labs/smoke_train.jsonl
+export OUT=/tmp/qwen-smoke
+export LORA=1 BATCH=2 ACCUM=1 MAX_STEPS=50 EPOCHS=2 LR=1e-4 SAVE_EVERY=1000000
+bash scripts/train_local.sh
+```
+
+Exit 0. 231 LoRA modules, 76,939,264 trainable parameters, 33 decoder layers checkpointed. PyTorch peak allocated 7001 MiB. nvidia-smi, sampled every 2 seconds, peaked at 9650 MiB. 50 steps in 21.4 s, 0.43 s/step (2.34 steps/s, the average from the start of the loop).
+
+Loss went down. The four printed steps, total loss then main loss:
+
+| step | loss | main |
+| --- | ---: | ---: |
+| 1 | 1.8334 | 0.5875 |
+| 20 | 2.4764 | 1.1473 |
+| 40 | 1.5895 | 0.3296 |
+| 50 | 1.3850 | 0.1688 |
+
+Step 20 is a longer bucket than step 1, so that one point is higher. Step 50 is below step 1. Gradient norm stayed above 1, so the LoRA weights received a gradient.
+
+```
+lora modules 231 rank 64 alpha 64.0 trainable 76,939,264 | checkpointed decoder layers 33 | base bf16, lora fp32, lr 0.0001
+GPUs 1 | per-GPU batch 2 x accum 1 = 2 clips/step | steps/epoch 32 | total 64 | save every 1000000 | save at []
+ep 0 step 1/64 loss 1.8334 main 0.5875 sub 4.1532 lr 1.00e-04 | 0.105 steps/s | 0 audio-h/h | ETA 0.2 h diac 0.00 grad 3.46
+ep 0 step 20/64 loss 2.4764 main 1.1473 sub 4.4302 lr 7.92e-05 | 1.332 steps/s | 9 audio-h/h | ETA 0.0 h diac 0.00 grad 3.10
+ep 1 step 40/64 loss 1.5895 main 0.3296 sub 4.1999 lr 3.17e-05 | 2.030 steps/s | 15 audio-h/h | ETA 0.0 h diac 0.00 grad 1.25
+ep 1 step 50/64 loss 1.3850 main 0.1688 sub 4.0541 lr 1.17e-05 | 2.342 steps/s | 16 audio-h/h | ETA 0.0 h diac 0.00 grad 1.11
+peak allocated 7001 MiB
+training finished steps 50 wall 21.4s
+TRAIN_EXIT 0
+```
